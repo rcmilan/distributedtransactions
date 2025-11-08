@@ -8,6 +8,8 @@ namespace DT.ServiceA.UseCases;
 
 public class CreateOrderUseCase(ILogger<CreateOrderUseCase> logger, OrderDbContext dbContext)
 {
+    // Orchestrates the creation of an Order and its corresponding domain event
+    // in a single database transaction (Transactional Outbox pattern).
     public async Task<Order> Execute(CreateOrderRequest input, Guid correlationId, CancellationToken cancellationToken)
     {
         var order = new Order
@@ -18,22 +20,21 @@ public class CreateOrderUseCase(ILogger<CreateOrderUseCase> logger, OrderDbConte
             CreatedAt = DateTime.UtcNow,
         };
 
-        logger.LogInformation("[{CorrelationId}] Order.CreatedAt.Kind: {Kind}", correlationId, order.CreatedAt.Kind);
-
-        // Criar evento
+        // Build the domain event that will later be published to the message broker.
         var evt = new OrderCreatedEvent(order.Id, order.CustomerId, order.AmountInCents, correlationId, DateTime.UtcNow);
 
-        logger.LogInformation("[{CorrelationId}] Event.OccurredAt.Kind: {Kind}", correlationId, evt.OccurredAt.Kind);
+        logger.LogDebug("[{CorrelationId}] Event.OccurredAt.Kind: {Kind}", correlationId, evt.OccurredAt.Kind);
 
-        // Iniciar transação para garantir atomicidade
+        // Begin a database transaction so that order + outbox message are committed atomically.
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
         {
-            // 1. Persist order
+            // Step 1: Persist the new order.
             dbContext.Orders.Add(order);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            // 2. Persist event no outbox (mesma transação)
+            // Step 2: Persist the event as an outbox message in the same transaction.
+            // This guarantees that if the order exists, the corresponding event record also exists.
             var outboxMessage = new OutboxMessage
             {
                 Id = Guid.NewGuid(),
@@ -42,15 +43,16 @@ public class CreateOrderUseCase(ILogger<CreateOrderUseCase> logger, OrderDbConte
                 OccurredAt = DateTime.UtcNow,
             };
 
-            logger.LogInformation("[{CorrelationId}] OutboxMessage.OccurredAt.Kind: {Kind}", correlationId, outboxMessage.OccurredAt.Kind);
+            logger.LogDebug("[{CorrelationId}] OutboxMessage.OccurredAt.Kind: {Kind}", correlationId, outboxMessage.OccurredAt.Kind);
+
             dbContext.OutboxMessages.Add(outboxMessage);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            // 3. Commit de ambos atomicamente
+            // Step 3: Commit once so both the order and outbox message are durably stored together.
             await transaction.CommitAsync(cancellationToken);
 
-            logger.LogInformation(
-                "[{CorrelationId}] Pedido {OrderId} criado com sucesso. Evento no Outbox: {OutboxId}",
+            logger.LogDebug(
+                "[{CorrelationId}] Order {OrderId} created. Outbox message: {OutboxId}",
                 correlationId,
                 order.Id,
                 outboxMessage.Id);
@@ -59,8 +61,9 @@ public class CreateOrderUseCase(ILogger<CreateOrderUseCase> logger, OrderDbConte
         }
         catch (Exception ex)
         {
+            // Roll back the transaction so we do not end up with a partial write (order without outbox entry or vice versa).
             await transaction.RollbackAsync(cancellationToken);
-            logger.LogError(ex, "[{CorrelationId}] Erro ao criar pedido", correlationId);
+            logger.LogError(ex, "[{CorrelationId}] Error while creating order", correlationId);
             throw;
         }
     }

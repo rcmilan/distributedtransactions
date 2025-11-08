@@ -12,7 +12,6 @@ public class OrderDbContext : DbContext
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
-    public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,15 +44,5 @@ public class OrderDbContext : DbContext
                 .IsUnique(false);
         });
 
-        modelBuilder.Entity<ProcessedMessage>(entity =>
-        {
-            entity.HasKey(x => x.Id);
-            entity.Property(x => x.Id).ValueGeneratedOnAdd();
-
-            entity.Property(x => x.MessageId).IsRequired();
-            entity.HasIndex(x => x.MessageId).IsUnique();
-
-            entity.Property(x => x.ProcessedAt).IsRequired();
-        });
     }
 }

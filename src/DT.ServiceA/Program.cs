@@ -50,9 +50,11 @@ public class Program
             AutomaticRecoveryEnabled = true
         };
 
-        builder.Services.AddSingleton(await factory.CreateConnectionAsync());
+        var connection = await factory.CreateConnectionAsync();
+        builder.Services.AddSingleton(connection);
+        builder.Services.AddSingleton<ChannelPool>();
 
-        // Servi�os
+        // Serviços
         builder.Services.AddScoped<CreateOrderUseCase>();
         builder.Services.AddHostedService<OutboxPublisher>();
         builder.Services.AddSwaggerGen();
