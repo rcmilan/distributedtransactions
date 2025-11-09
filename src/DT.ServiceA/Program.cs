@@ -37,11 +37,11 @@ public class Program
         builder.Services.AddDbContext<OrderDbContext>(options =>
             options.UseNpgsql(connectionString));
 
-        // RabbitMQ
+        // RabbitMQ connection & channel pool
         var rabbitMqHost = builder.Configuration.GetValue<string>("RabbitMq:Host") ?? "localhost";
         var rabbitMqPort = builder.Configuration.GetValue<int?>("RabbitMq:Port") ?? 5672;
 
-        var factory = new ConnectionFactory()
+        var factory = new ConnectionFactory
         {
             HostName = rabbitMqHost,
             Port = rabbitMqPort,
@@ -54,9 +54,15 @@ public class Program
         builder.Services.AddSingleton(connection);
         builder.Services.AddSingleton<ChannelPool>();
 
-        // Serviços
+        // Outbox publisher abstraction and RabbitMQ implementation
+        builder.Services.AddSingleton<IOutboxMessagePublisher, RabbitMqOutboxMessagePublisher>();
+
+        // Application services
         builder.Services.AddScoped<CreateOrderUseCase>();
+
+        // Outbox background publisher (transport-agnostic)
         builder.Services.AddHostedService<OutboxPublisher>();
+
         builder.Services.AddSwaggerGen();
 
         var app = builder.Build();
